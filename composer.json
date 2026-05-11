@@ -1,0 +1,16 @@
+{
+  "name": "market-media/router",
+  "description": "Um roteador clássico é fácil, rápido e extremamente descomplicado. Crie e gerencie suas rotas em minutos!",
+  "type": "library",
+  "license": "MIT",
+  "require": {
+    "php": ">=8.2"
+  },
+  "autoload": {
+    "psr-4": {
+      "MarketMedia\\Router\\": "src/"
+    }
+  },
+  "minimum-stability": "stable",
+  "prefer-stable": true
+}
