@@ -6,5 +6,5 @@ $vendorDir = dirname(__DIR__);
 $baseDir = dirname($vendorDir);
 
 return array(
-    'CoffeeCode\\Router\\' => array($baseDir . '/src'),
+    'MarketMedia\\Router\\' => array($baseDir . '/src'),
 );

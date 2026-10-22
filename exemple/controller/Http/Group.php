@@ -6,12 +6,6 @@ class Group
 {
     public function handle(): bool
     {
-        echo "<p><i>O middleware <b>Group</b> foi executado!</i></p>";
-
-        $group = true;
-        if ($group) {
-            return true;
-        }
-        return false;
+        return isset($_SESSION['user_id']) && ($_SESSION['role'] ?? null) === 'admin';
     }
 }

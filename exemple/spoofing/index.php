@@ -1,10 +1,11 @@
 <?php
 
 require dirname(__DIR__, 2) . "/vendor/autoload.php";
+require dirname(__DIR__) . "/security.php";
 
 use MarketMedia\Router\Router;
 
-define("BASE", "https://www.localhost/marketmedia/router/exemple/controller");
+define("BASE", "https://www.localhost/marketmedia/router/exemple/spoofing");
 $router = new Router(BASE);
 
 /**
@@ -14,7 +15,7 @@ $router->get(
     "/",
     function ($data) {
         $data = ["realHttp" => $_SERVER["REQUEST_METHOD"]] + $data;
-        echo "<h1>GET :: Spoofing</h1>", "<pre>", print_r($data, true), "</pre>";
+        echo "<h1>GET :: Spoofing</h1>", "<p>Requisição processada.</p>";
     }
 );
 
@@ -25,8 +26,9 @@ $router->post(
     "/",
     function ($data) {
         $data = ["realHttp" => $_SERVER["REQUEST_METHOD"]] + $data;
-        echo "<h1>POST :: Spoofing</h1>", "<pre>", print_r($data, true), "</pre>";
-    }
+        echo "<h1>POST :: Spoofing</h1>", "<p>Requisição processada.</p>";
+    },
+    middleware: ExampleCsrf::class
 );
 
 /**
@@ -36,8 +38,9 @@ $router->put(
     "/",
     function ($data) {
         $data = ["realHttp" => $_SERVER["REQUEST_METHOD"]] + $data;
-        echo "<h1>PUT :: Spoofing</h1>", "<pre>", print_r($data, true), "</pre>";
-    }
+        echo "<h1>PUT :: Spoofing</h1>", "<p>Requisição processada.</p>";
+    },
+    middleware: ExampleCsrf::class
 );
 
 /**
@@ -47,8 +50,9 @@ $router->patch(
     "/",
     function ($data) {
         $data = ["realHttp" => $_SERVER["REQUEST_METHOD"]] + $data;
-        echo "<h1>PATCH :: Spoofing</h1>", "<pre>", print_r($data, true), "</pre>";
-    }
+        echo "<h1>PATCH :: Spoofing</h1>", "<p>Requisição processada.</p>";
+    },
+    middleware: ExampleCsrf::class
 );
 
 /**
@@ -58,14 +62,18 @@ $router->delete(
     "/",
     function ($data) {
         $data = ["realHttp" => $_SERVER["REQUEST_METHOD"]] + $data;
-        echo "<h1>DELETE :: Spoofing</h1>", "<pre>", print_r($data, true), "</pre>";
-    }
+        echo "<h1>DELETE :: Spoofing</h1>", "<p>Requisição processada.</p>";
+    },
+    middleware: ExampleCsrf::class
 );
 
-$router->dispatch();
+if (!$router->dispatch()) {
+    http_response_code($router->error() ?? 500);
+}
 ?>
 
 <form action="" method="POST">
+    <?= exampleCsrfField() ?>
     <select name="_method">
         <option value="POST">POST</option>
         <option value="PUT">PUT</option>

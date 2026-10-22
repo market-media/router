@@ -40,7 +40,7 @@ class Name
     public function params(array $data): void
     {
         echo "<h3>Params</h3>";
-        var_dump($data, $this->router->current());
+        echo "<p>Parâmetros recebidos.</p>";
     }
 
     public function redirect(array $data): void

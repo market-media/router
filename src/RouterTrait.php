@@ -1,216 +1,181 @@
 <?php
 
+declare(strict_types=1);
+
 namespace MarketMedia\Router;
 
-/**
- * Trait RouterTrait
- * @package MarketMedia\Router
- */
 trait RouterTrait
 {
-    /**
-     * @param string $method
-     * @param string $route
-     * @param callable|string $handler
-     * @param string|null $name
-     * @param array|string|null $middleware
-     */
     protected function addRoute(
-        string          $method,
-        string          $route,
+        string $method,
+        string $route,
         callable|string $handler,
-        ?string         $name = null,
+        ?string $name = null,
         array|string|null $middleware = null
     ): void {
-        $route = rtrim($route, "/");
-
-        $removeGroupFromPath = $this->group ? str_replace($this->group, "", $this->path) : $this->path;
-        $pathAssoc = trim($removeGroupFromPath, "/");
-        $routeAssoc = trim($route, "/");
-
-        preg_match_all("~\{\s* ([a-zA-Z_][a-zA-Z0-9_-]*) \}~x", $routeAssoc, $keys, PREG_SET_ORDER);
-        $routeDiff = array_values(array_diff_assoc(explode("/", $pathAssoc), explode("/", $routeAssoc)));
-
-        $this->formSpoofing();
+        $route = '/' . trim(($this->group !== null ? $this->group . '/' : '') . ltrim($route, '/'), '/');
+        $keys = [];
+        $pattern = '';
         $offset = 0;
-        foreach ($keys as $key) {
-            $this->data[$key[1]] = ($routeDiff[$offset++] ?? null);
+        preg_match_all('/\{([a-zA-Z_][a-zA-Z0-9_-]*)\}/', $route, $matches, PREG_OFFSET_CAPTURE);
+        $literalLength = 0;
+        foreach ($matches[0] as $index => [$token, $position]) {
+            $key = $matches[1][$index][0];
+            if (in_array($key, $keys, true)) {
+                throw new \InvalidArgumentException('Duplicate route parameter.');
+            }
+            $literal = substr($route, $offset, $position - $offset);
+            $pattern .= preg_quote($literal, '~') . '([^/]+)';
+            $literalLength += strlen($literal);
+            $keys[] = $key;
+            $offset = $position + strlen($token);
         }
+        $literal = substr($route, $offset);
+        $pattern .= preg_quote($literal, '~');
+        $literalLength += strlen($literal);
+        $groupMiddleware = $this->middleware[$this->group ?? ''] ?? [];
+        $middlewares = array_merge((array) $groupMiddleware, (array) $middleware);
+        [$resolvedHandler, $action] = $this->resolveHandler($handler);
 
-        $route = (!$this->group ? $route : "/{$this->group}{$route}");
-        $data = $this->data;
-        $namespace = $this->namespace;
-        $middleware = $middleware ?? (!empty($this->middleware[$this->group]) ? $this->middleware[$this->group] : null);
-        $router = function () use ($method, $handler, $data, $route, $name, $namespace, $middleware) {
-            return [
-                "route" => $route,
-                "name" => $name,
-                "method" => $method,
-                "middlewares" => $middleware,
-                "handler" => $this->handler($handler, $namespace),
-                "action" => $this->action($handler),
-                "data" => $data
-            ];
-        };
-
-        $route = preg_replace('~{([^}]*)}~', "([^/]+)", $route);
-        $this->routes[$method][$route] = $router();
+        $this->routes[$method][$route] = [
+            'route' => $route,
+            'name' => $name,
+            'method' => $method,
+            'middlewares' => $middlewares,
+            'handler' => $resolvedHandler,
+            'action' => $action,
+            'namespace' => $this->namespace,
+            'group' => $this->group,
+            'pattern' => '~\A' . $pattern . '\z~D',
+            'keys' => $keys,
+            'specificity' => [count($keys) === 0 ? 1 : 0, $literalLength, -count($keys)],
+        ];
     }
 
-    /**
-     * httpMethod form spoofing
-     */
+    /** Read the request once; method overrides are accepted only on real POSTs. */
     protected function formSpoofing(): void
     {
-        $post = filter_input_array(INPUT_POST, FILTER_DEFAULT) ?? $_POST;
-
-        if (!empty($post['_method']) && in_array($post['_method'], ["PUT", "PATCH", "DELETE"])) {
-            $this->httpMethod = $post['_method'];
-            $this->data = $post;
-
-            unset($this->data["_method"]);
+        $length = $_SERVER['CONTENT_LENGTH'] ?? null;
+        if ($length !== null && (!is_scalar($length) || !ctype_digit((string) $length))) {
+            $this->requestError = self::BAD_REQUEST;
             return;
         }
-
-        if ($this->httpMethod == "POST") {
-            $this->data = filter_input_array(INPUT_POST, FILTER_DEFAULT) ?? $_POST;
-
-            unset($this->data["_method"]);
+        if ($length !== null && (float) $length > self::MAX_BODY_BYTES) {
+            $this->requestError = self::PAYLOAD_TOO_LARGE;
             return;
         }
-
-        if (in_array($this->httpMethod, ["PUT", "PATCH", "DELETE"]) && !empty($_SERVER['CONTENT_LENGTH'])) {
-            parse_str(file_get_contents('php://input', false, null, 0, $_SERVER['CONTENT_LENGTH']), $putPatch);
-            $this->data = $putPatch;
-
-            unset($this->data["_method"]);
-            return;
+        if ($this->httpMethod === 'POST') {
+            $this->bodyData = $_POST;
+            $override = $this->bodyData['_method'] ?? null;
+            if ($override !== null) {
+                if (!is_string($override) || !in_array($override, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
+                    $this->requestError = self::BAD_REQUEST;
+                    return;
+                }
+                $this->httpMethod = $override;
+            }
+        } elseif (in_array($this->httpMethod, ['PUT', 'PATCH', 'DELETE'], true)) {
+            $body = $this->readBody();
+            if (strlen($body) > self::MAX_BODY_BYTES) {
+                $this->requestError = self::PAYLOAD_TOO_LARGE;
+                return;
+            }
+            $contentType = strtolower(trim(explode(';', $_SERVER['CONTENT_TYPE'] ?? '')[0]));
+            if ($body !== '' && $contentType !== 'application/x-www-form-urlencoded') {
+                $this->requestError = self::UNSUPPORTED_MEDIA_TYPE;
+                return;
+            }
+            parse_str($body, $this->bodyData);
         }
-
-        $this->data = [];
+        unset($this->bodyData['_method']);
     }
 
-    /**
-     * @return bool
-     */
+    protected function readBody(): string
+    {
+        $body = file_get_contents('php://input', false, null, 0, self::MAX_BODY_BYTES + 1);
+        if ($body === false) {
+            $this->requestError = self::BAD_REQUEST;
+            return '';
+        }
+        return $body;
+    }
+
     private function execute(): bool
     {
-        if ($this->route) {
-            if (!$this->middleware()) {
-                return false;
-            }
-
-            if (is_callable($this->route['handler'])) {
-                call_user_func($this->route['handler'], ($this->route['data'] ?? []), $this);
-                return true;
-            }
-
-            $controller = $this->route['handler'];
-            $method = $this->route['action'];
-
-            if (class_exists($controller)) {
-                $newController = new $controller($this);
-                if (method_exists($controller, $method)) {
-                    $newController->$method(($this->route['data'] ?? []));
-                    return true;
-                }
-
-                $this->error = self::METHOD_NOT_ALLOWED;
-                return false;
-            }
-
-            $this->error = self::BAD_REQUEST;
+        if (!$this->route) {
+            $this->error = self::NOT_FOUND;
             return false;
         }
-
-        $this->error = self::NOT_FOUND;
-        return false;
-    }
-
-    /**
-     * @return bool
-     */
-    private function middleware(): bool
-    {
-        if (empty($this->route["middlewares"])) {
-            return true;
-        }
-
-        $middlewares = is_array(
-            $this->route["middlewares"]
-        ) ? $this->route["middlewares"] : [$this->route["middlewares"]];
-
-        foreach ($middlewares as $middleware) {
-            if (class_exists($middleware)) {
-                $newMiddleware = new $middleware;
-                if (method_exists($newMiddleware, "handle")) {
-                    if (!$newMiddleware->handle($this)) {
-                        return false;
-                    }
-                } else {
-                    $this->error = self::METHOD_NOT_ALLOWED;
-                    return false;
-                }
-            } else {
+        foreach ($this->route['middlewares'] as $middleware) {
+            if (!is_string($middleware) || !class_exists($middleware)) {
                 $this->error = self::NOT_IMPLEMENTED;
                 return false;
             }
+            $instance = new $middleware();
+            if (!is_callable([$instance, 'handle'])) {
+                $this->error = self::METHOD_NOT_ALLOWED;
+                return false;
+            }
+            if ($instance->handle($this) !== true) {
+                $this->error = self::FORBIDDEN;
+                return false;
+            }
         }
-
+        if ($this->route['action'] === null && is_callable($this->route['handler'])) {
+            ($this->route['handler'])($this->data, $this);
+            return true;
+        }
+        $controller = $this->route['handler'];
+        if (!is_string($controller) || !class_exists($controller)) {
+            $this->error = self::BAD_REQUEST;
+            return false;
+        }
+        $method = $this->route['action'];
+        if (!is_string($method) || !method_exists($controller, $method)) {
+            $this->error = self::METHOD_NOT_ALLOWED;
+            return false;
+        }
+        $reflection = new \ReflectionMethod($controller, $method);
+        if (!$reflection->isPublic() || str_starts_with($method, '__')) {
+            $this->error = self::METHOD_NOT_ALLOWED;
+            return false;
+        }
+        $instance = new $controller($this);
+        $instance->$method($this->data);
         return true;
     }
 
-    /**
-     * @param callable|string $handler
-     * @param string|null $namespace
-     * @return callable|string
-     */
-    private function handler(callable|string $handler, ?string $namespace): callable|string
+    private function resolveHandler(callable|string $handler): array
     {
-        return (!is_string($handler) ? $handler : "{$namespace}\\" . explode($this->separator, $handler)[0]);
-    }
-
-    /**
-     * @param callable|string $handler
-     * @return string|null
-     */
-    private function action(callable|string $handler): ?string
-    {
-        return (!is_string($handler) ?: (explode($this->separator, $handler)[1] ?? null));
-    }
-
-    /**
-     * @param array $route_item
-     * @param array|null $data
-     * @return string|null
-     */
-    private function treat(array $route_item, ?array $data = null): ?string
-    {
-        $route = $route_item["route"];
-        if (!empty($data)) {
-            $arguments = [];
-            $params = [];
-            foreach ($data as $key => $value) {
-                if (!strstr($route, "{{$key}}")) {
-                    $params[$key] = $value;
-                }
-                $arguments["{{$key}}"] = $value;
-            }
-            $route = $this->process($route, $arguments, $params);
+        if (!is_string($handler) || is_callable($handler)) {
+            return [$handler, null];
         }
-
-        return "{$this->projectUrl}{$route}";
+        $parts = explode($this->separator, $handler);
+        if (count($parts) !== 2 || $parts[0] === '' || !preg_match('/\A[a-zA-Z_][a-zA-Z0-9_]*\z/', $parts[1])) {
+            throw new \InvalidArgumentException('Expected Controller:method or a callable.');
+        }
+        $controller = str_starts_with($parts[0], '\\')
+            ? $parts[0]
+            : ($this->namespace ? $this->namespace . '\\' : '') . $parts[0];
+        return [$controller, $parts[1]];
     }
 
-    /**
-     * @param string $route
-     * @param array $arguments
-     * @param array|null $params
-     * @return string
-     */
-    private function process(string $route, array $arguments, ?array $params = null): string
+    private function treat(array $route, ?array $data = null): string
     {
-        $params = (!empty($params) ? "?" . http_build_query($params) : null);
-        return str_replace(array_keys($arguments), array_values($arguments), $route) . "{$params}";
+        $data ??= [];
+        $arguments = [];
+        foreach ($route['keys'] as $key) {
+            if (!array_key_exists($key, $data) || !is_scalar($data[$key])) {
+                throw new \InvalidArgumentException('Missing or invalid route parameter: ' . $key);
+            }
+            $value = (string) $data[$key];
+            if ($value === '' || $value === '.' || $value === '..') {
+                throw new \InvalidArgumentException('Invalid route segment.');
+            }
+            $arguments['{' . $key . '}'] = rawurlencode($value);
+            unset($data[$key]);
+        }
+        $query = $data ? '?' . http_build_query($data, '', '&', PHP_QUERY_RFC3986) : '';
+        return $this->projectUrl . strtr($route['route'] === '/' ? '' : $route['route'], $arguments) . $query;
     }
 }

@@ -1,198 +1,193 @@
 <?php
 
+declare(strict_types=1);
+
 namespace MarketMedia\Router;
 
-/**
- * Class MarketMedia Dispatch
- *
- * @package MarketMedia\Router
- */
 abstract class Dispatch
 {
     use RouterTrait;
 
-    /** @var string */
     protected string $projectUrl;
-
-    /** @var string */
     protected string $httpMethod;
-
-    /** @var string */
-    protected string $path;
-
-    /** @var array|null */
+    protected string $path = '/';
     protected ?array $route = null;
-
-    /** @var array */
-    protected array $routes;
-
-    /** @var string */
+    protected array $routes = [];
     protected string $separator;
-
-    /** @var string|null */
     protected ?string $namespace = null;
-
-    /** @var string|null */
     protected ?string $group = null;
-
-    /** @var array|null */
     protected ?array $middleware = null;
-
-    /** @var array|null */
     protected ?array $data = null;
-
-    /** @var int */
+    protected array $bodyData = [];
     protected ?int $error = null;
+    protected ?int $requestError = null;
 
-    /** @const int Bad Request */
-    public const BAD_REQUEST = 400;
+    public const int BAD_REQUEST = 400;
+    public const int FORBIDDEN = 403;
+    public const int NOT_FOUND = 404;
+    public const int METHOD_NOT_ALLOWED = 405;
+    public const int PAYLOAD_TOO_LARGE = 413;
+    public const int UNSUPPORTED_MEDIA_TYPE = 415;
+    public const int NOT_IMPLEMENTED = 501;
+    public const int MAX_PATH_BYTES = 4096;
+    public const int MAX_BODY_BYTES = 1048576;
 
-    /** @const int Not Found */
-    public const NOT_FOUND = 404;
-
-    /** @const int Method Not Allowed */
-    public const METHOD_NOT_ALLOWED = 405;
-
-    /** @const int Not Implemented */
-    public const NOT_IMPLEMENTED = 501;
-
-    /**
-     * Dispatch constructor.
-     *
-     * @param string $projectUrl
-     * @param null|string $separator
-     */
-    public function __construct(string $projectUrl, ?string $separator = ":")
+    public function __construct(string $projectUrl, ?string $separator = ':')
     {
-        $this->projectUrl = (substr($projectUrl, "-1") == "/" ? substr($projectUrl, 0, -1) : $projectUrl);
-        $this->path = $_GET["route"] ?? rtrim((filter_input(INPUT_GET, "route", FILTER_DEFAULT) ?? "/"), "/");
-        $this->separator = ($separator ?? ":");
-        $this->httpMethod = $_SERVER['REQUEST_METHOD'];
+        $this->assertHttpUrl($projectUrl);
+        $parts = parse_url($projectUrl);
+        if (isset($parts['query']) || isset($parts['fragment'])) {
+            throw new \InvalidArgumentException('Project URL cannot contain a query or fragment.');
+        }
+        $this->projectUrl = rtrim($projectUrl, '/');
+        $this->separator = $separator ?? ':';
+        if ($this->separator === '') {
+            throw new \InvalidArgumentException('Handler separator cannot be empty.');
+        }
+        $path = $_GET['route'] ?? '/';
+        if (!is_string($path) || strlen($path) > self::MAX_PATH_BYTES
+            || preg_match('/[\x00-\x20\x7f\\\\?#]/', $path)
+            || ($path !== '' && !str_starts_with($path, '/')) || str_starts_with($path, '//')) {
+            $this->requestError = self::BAD_REQUEST;
+        } else {
+            $this->path = rtrim($path, '/') ?: '/';
+        }
+        $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+        if (!is_string($method) || !preg_match('/\A[A-Z]+\z/', $method)) {
+            $this->requestError = self::BAD_REQUEST;
+            $method = 'GET';
+        }
+        $this->httpMethod = $method;
+        if ($this->requestError === null) {
+            $this->formSpoofing();
+        }
     }
 
-    /**
-     * @return array
-     */
-    public function __debugInfo()
+    /** Exclude request data, handlers and middleware internals from dumps. */
+    public function __debugInfo(): array
     {
-        return $this->routes;
+        return ['routeCount' => array_sum(array_map('count', $this->routes)), 'error' => $this->error];
     }
 
-    /**
-     * @param string $name
-     * @param array|null $data
-     * @return string|null
-     */
     public function route(string $name, ?array $data = null): ?string
     {
-        foreach ($this->routes as $http_verb) {
-            foreach ($http_verb as $route_item) {
-                if (!empty($route_item["name"]) && $route_item["name"] == $name) {
-                    return $this->treat($route_item, $data);
+        foreach ($this->routes as $routes) {
+            foreach ($routes as $route) {
+                if ($route['name'] === $name) {
+                    return $this->treat($route, $data);
                 }
             }
         }
         return null;
     }
 
-    /**
-     * @param null|string $namespace
-     * @return Dispatch
-     */
     public function namespace(?string $namespace): Dispatch
     {
-        $this->namespace = ($namespace ? ucwords($namespace) : null);
+        $this->namespace = $namespace !== null ? trim($namespace, '\\') : null;
         return $this;
     }
 
-    /**
-     * @param null|string $group
-     * @return Dispatch
-     */
     public function group(?string $group, array|string|null $middleware = null): Dispatch
     {
-        $this->group = ($group ? trim($group, "/") : null);
-        $this->middleware = $middleware ? [$this->group => $middleware] : null;
+        $normalized = $group !== null ? trim($group, '/') : '';
+        $this->group = $normalized !== '' ? $normalized : null;
+        $this->middleware = [$this->group ?? '' => (array) $middleware];
         return $this;
     }
 
-    /**
-     * @return null|array
-     */
     public function data(): ?array
     {
         return $this->data;
     }
 
-    /**
-     * @return object|null
-     */
+    /** Public metadata only; request values are available explicitly via data(). */
     public function current(): ?object
     {
-        return (object)array_merge(
-            [
-                "namespace" => $this->namespace,
-                "group" => $this->group,
-                "path" => $this->path
-            ],
-            $this->route ?? []
-        );
+        if ($this->route === null) {
+            return null;
+        }
+        return (object) array_intersect_key($this->route, array_flip(['route', 'name', 'method', 'namespace', 'group']));
     }
 
-    /**
-     * @return string
-     */
     public function home(): string
     {
         return $this->projectUrl;
     }
 
-    /**
-     * @param string $route
-     * @param array|null $data
-     */
+    /** Redirects are restricted to the configured origin. */
     public function redirect(string $route, ?array $data = null): void
     {
-        if ($name = $this->route($route, $data)) {
-            header("Location: {$name}");
-            exit;
-        }
-
-        if (filter_var($route, FILTER_VALIDATE_URL)) {
-            header("Location: {$route}");
-            exit;
-        }
-
-        $route = (substr($route, 0, 1) == "/" ? $route : "/{$route}");
-        header("Location: {$this->projectUrl}{$route}");
+        $destination = $this->redirectDestination($route, $data);
+        header('Location: ' . $destination, true, 302);
         exit;
     }
 
-    /**
-     * @return null|int
-     */
+    protected function redirectDestination(string $route, ?array $data = null): string
+    {
+        $destination = $this->route($route, $data);
+        if ($destination === null) {
+            if (preg_match('/[\x00-\x20\x7f\\\\]/', $route) || str_starts_with($route, '//')) {
+                throw new \InvalidArgumentException('Invalid redirect destination.');
+            }
+            $destination = preg_match('/\A[a-z][a-z0-9+.-]*:/i', $route)
+                ? $route : $this->projectUrl . '/' . ltrim($route, '/');
+        }
+        $this->assertHttpUrl($destination);
+        $base = parse_url($this->projectUrl);
+        $target = parse_url($destination);
+        $port = static fn(array $url): int => $url['port'] ?? (strtolower($url['scheme']) === 'https' ? 443 : 80);
+        if (strtolower($base['scheme']) !== strtolower($target['scheme'])
+            || strtolower($base['host']) !== strtolower($target['host']) || $port($base) !== $port($target)) {
+            throw new \InvalidArgumentException('External redirects are not allowed.');
+        }
+        return $destination;
+    }
+
+    private function assertHttpUrl(string $url): void
+    {
+        $parts = parse_url($url);
+        if (!filter_var($url, FILTER_VALIDATE_URL) || $parts === false
+            || !in_array(strtolower($parts['scheme'] ?? ''), ['http', 'https'], true)
+            || isset($parts['user']) || isset($parts['pass'])
+            || preg_match('/[\x00-\x20\x7f\\\\]/', $url)) {
+            throw new \InvalidArgumentException('Expected an absolute HTTP(S) URL without credentials.');
+        }
+    }
+
     public function error(): ?int
     {
         return $this->error;
     }
 
-    /**
-     * @return bool
-     */
     public function dispatch(): bool
     {
-        if (empty($this->routes) || empty($this->routes[$this->httpMethod])) {
-            $this->error = self::NOT_IMPLEMENTED;
+        $this->error = $this->requestError;
+        $this->route = null;
+        $this->data = null;
+        if ($this->error !== null) {
             return false;
         }
-
-        $this->route = null;
-        foreach ($this->routes[$this->httpMethod] as $key => $route) {
-            if (preg_match("~^" . $key . "$~", $this->path, $found)) {
+        $routes = array_values($this->routes[$this->httpMethod] ?? []);
+        // Static routes win; equal specificity preserves registration order.
+        usort($routes, static fn(array $a, array $b): int => $b['specificity'] <=> $a['specificity']);
+        foreach ($routes as $route) {
+            if (preg_match($route['pattern'], $this->path, $found) === 1) {
+                array_shift($found);
+                $params = array_combine($route['keys'], $found);
+                $this->data = array_replace($this->bodyData, $params);
                 $this->route = $route;
+                return $this->execute();
             }
         }
-
-        return $this->execute();
+        $this->error = self::NOT_FOUND;
+        foreach ($this->routes as $methodRoutes) {
+            foreach ($methodRoutes as $route) {
+                if (preg_match($route['pattern'], $this->path) === 1) {
+                    $this->error = self::METHOD_NOT_ALLOWED;
+                    return false;
+                }
+            }
+        }
+        return false;
     }
 }

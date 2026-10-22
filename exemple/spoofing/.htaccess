@@ -1,5 +1,5 @@
 RewriteEngine On
-Options All -Indexes
+Options -Indexes
 
 # ROUTER URL Rewrite
 RewriteCond %{SCRIPT_FILENAME} !-f

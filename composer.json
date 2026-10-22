@@ -4,12 +4,16 @@
   "type": "library",
   "license": "MIT",
   "require": {
-    "php": ">=8.2"
+    "php": ">=8.5"
   },
   "autoload": {
     "psr-4": {
       "MarketMedia\\Router\\": "src/"
     }
+  },
+  "scripts": {
+    "test": "@php tests/run.php",
+    "test:http": "@php tests/http.php"
   },
   "minimum-stability": "stable",
   "prefer-stable": true

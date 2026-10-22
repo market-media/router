@@ -23,7 +23,7 @@ class Coffee
         echo "<nav>
             <a href='{$url}'>Home</a> | 
             <a href='{$url}/edit/{$rand}'>Edit</a> | 
-            <a href='{$url}/logado/?user=true'>Logado</a> | 
+            <a href='{$url}/logado'>Logado</a> |
             <a href='{$router->route("coffe.denied")}'>Negado</a> | 
             <a href='{$url}/error/'>Error</a>
         </nav>";
@@ -49,8 +49,8 @@ class Coffee
      */
     public function home(array $data): void
     {
-        echo "<h3>", __METHOD__, "::", $_SERVER["REQUEST_METHOD"], "</h3><hr>";
-        echo "<pre>", print_r($data, true), "</pre>";
+        echo "<h3>", __METHOD__, "::", htmlspecialchars($_SERVER["REQUEST_METHOD"], ENT_QUOTES | ENT_SUBSTITUTE, "UTF-8"), "</h3><hr>";
+        echo "<p>Requisição processada.</p>";
     }
 
     /**
@@ -58,16 +58,17 @@ class Coffee
      */
     public function edit(array $data): void
     {
-        echo "<h3>", __METHOD__, "::", $_SERVER["REQUEST_METHOD"], "</h3><hr>";
+        echo "<h3>", __METHOD__, "::", htmlspecialchars($_SERVER["REQUEST_METHOD"], ENT_QUOTES | ENT_SUBSTITUTE, "UTF-8"), "</h3><hr>";
 
-        echo "<form name='marketmedia' method='post' enctype='multipart/form-data'>
+        $csrf = \exampleCsrfField();
+        echo "<form name='marketmedia' method='post' enctype='multipart/form-data'>{$csrf}
             <input name=\"first_name\" value=\"Robson\">
             <input name=\"last_name\" value=\"V. Leite\">
             <input name=\"email\" value=\"cursos@upinside.com.br\">
             <button>@MarketMedia</button>
         </form>";
 
-        echo "<pre>", print_r($data, true), "</pre>";
+        echo "<p>Requisição processada.</p>";
     }
 
     /**
@@ -75,7 +76,7 @@ class Coffee
      */
     public function notfound(array $data): void
     {
-        echo "<h3>Whoops!</h3>", "<pre>", print_r($data, true), "</pre>";
+        echo "<h3>Whoops!</h3>", "<p>Requisição processada.</p>";
     }
 
     /**
@@ -83,7 +84,7 @@ class Coffee
      */
     public function admin(array $data): void
     {
-        echo "<h3>Admin Group:</h3>", "<pre>", print_r($data, true), "</pre>";
+        echo "<h3>Admin Group:</h3>", "<p>Requisição processada.</p>";
     }
 
     /**
@@ -91,10 +92,7 @@ class Coffee
      */
     public function logged(array $data)
     {
-        echo "<h3>Logged</h3>", "<p>Essa tela simula execução de múltiplos middlewares</p>", "<pre>", print_r(
-            $data,
-            true
-        ), "</pre>";
+        echo "<h3>Logged</h3>", "<p>Essa tela simula execução de múltiplos middlewares</p>", "<p>Requisição processada.</p>";
     }
 
     /**
@@ -102,6 +100,6 @@ class Coffee
      */
     public function denied(array $data)
     {
-        echo "<h3>Acessou com sucesso: (Access Denied)</h3>", "<pre>", print_r($data, true), "</pre>";
+        echo "<h3>Acessou com sucesso: (Access Denied)</h3>", "<p>Requisição processada.</p>";
     }
 }

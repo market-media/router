@@ -1,14 +1,8 @@
 RewriteEngine On
-Options All -Indexes
+Options -Indexes
 
-# ROUTER WWW Redirect.
-RewriteCond %{HTTP_HOST} !^www\. [NC]
-RewriteRule ^ https://www.%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
-
-# ROUTER HTTPS Redirect
-RewriteCond %{HTTP:X-Forwarded-Proto} !https
-RewriteCond %{HTTPS} off
-RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+# Configure HTTPS and a fixed canonical hostname in the server virtual host.
+# Do not build redirect destinations from untrusted Host/Forwarded headers.
 
 # ROUTER URL Rewrite
 RewriteCond %{SCRIPT_FILENAME} !-f

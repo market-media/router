@@ -1,6 +1,7 @@
 <?php
 
 require dirname(__DIR__, 2) . "/vendor/autoload.php";
+require dirname(__DIR__) . "/security.php";
 require __DIR__ . "/Test/Coffee.php";
 require __DIR__ . "/Test/Name.php";
 
@@ -24,9 +25,9 @@ $router = new Router(BASE);
 $router->namespace("Test");
 
 $router->get("/", "Coffee:home");
-$router->get("/edit/{id}", "Coffee:edit", middleware: Middleware::GUEST);
-$router->post("/edit/{id}", "Coffee:edit");
-$router->get("/logado", "Coffee:logged", middleware: [\Http\Guest::class, \Http\User::class]);
+$router->get("/edit/{id}", "Coffee:edit", middleware: Middleware::USER);
+$router->post("/edit/{id}", "Coffee:edit", middleware: [Middleware::USER, \ExampleCsrf::class]);
+$router->get("/logado", "Coffee:logged", middleware: \Http\User::class);
 $router->get("/negado", "Coffee:denied", "coffe.denied", Middleware::USER);
 
 /**
@@ -36,7 +37,7 @@ $router->group("admin", \Http\Group::class);
 
 $router->get("/", "Coffee:admin");
 $router->get("/user/{id}", "Coffee:admin");
-$router->get("/user/{id}/profile", "Coffee:admin", \Http\Guest::class);
+$router->get("/user/{id}/profile", "Coffee:admin", middleware: \Http\User::class);
 $router->get("/user/{id}/profile/{photo}", "Coffee:admin");
 
 /**
@@ -57,7 +58,7 @@ $router->group("call", Middleware::GUEST);
 $router->get(
     "/",
     function ($data, Router $route) {
-        var_dump($data, $route->current());
+        echo "<p>Requisição processada.</p>";
 
         echo "<a href='{$route->home()}' title='voltar'>voltar</a>";
     }
@@ -65,7 +66,7 @@ $router->get(
 $router->get(
     "/{app}/",
     function ($data, Router $route) {
-        var_dump($data, $route->current());
+        echo "<p>Requisição processada.</p>";
 
         echo "<a href='{$route->home()}' title='voltar'>voltar</a>";
     }
@@ -83,6 +84,6 @@ $router->get("/{errcode}", "Coffee:notFound");
 $router->dispatch();
 
 if ($router->error()) {
-    //var_dump($router->error());
-    $router->redirect("/error/{$router->error()}");
+    http_response_code($router->error());
+    echo "<p>Não foi possível processar a requisição.</p>";
 }
